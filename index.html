@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>教育部辭典查詢</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #f6f7fb;
+        color: #1f2937;
+      }
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+      h1 {
+        margin-bottom: 12px;
+        font-size: 28px;
+      }
+      .card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+        padding: 20px;
+        margin-top: 16px;
+      }
+      label {
+        font-weight: 600;
+      }
+      .search-bar {
+        display: flex;
+        gap: 12px;
+        margin-top: 12px;
+      }
+      input[type="text"] {
+        flex: 1;
+        padding: 12px 14px;
+        border: 1px solid #cbd5f5;
+        border-radius: 8px;
+        font-size: 16px;
+      }
+      button {
+        border: none;
+        background: #4f46e5;
+        color: #fff;
+        font-weight: 600;
+        padding: 12px 18px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .hint {
+        color: #6b7280;
+        margin-top: 10px;
+        font-size: 14px;
+      }
+      .status {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #eef2ff;
+        color: #3730a3;
+      }
+      .error {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      .result-title {
+        font-size: 20px;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+      .section {
+        margin-top: 16px;
+      }
+      .section h3 {
+        margin-bottom: 8px;
+        font-size: 16px;
+        color: #111827;
+      }
+      .definition {
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #f9fafb;
+        margin-bottom: 10px;
+      }
+      .definition p {
+        margin: 6px 0;
+      }
+      .pill-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .pill {
+        background: #e0e7ff;
+        color: #3730a3;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 14px;
+      }
+      .history-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      .history-item:last-child {
+        border-bottom: none;
+      }
+      .history-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .history-meta span {
+        font-size: 13px;
+        color: #6b7280;
+      }
+      .history-actions button {
+        background: #0ea5e9;
+      }
+      footer {
+        margin-top: 28px;
+        font-size: 13px;
+        color: #6b7280;
+      }
+      footer a {
+        color: #4f46e5;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>教育部辭典查詢小幫手</h1>
+      <p>輸入單一中文字、詞語或成語，即可取得教育部辭典解釋。單一字會額外顯示造詞與成語清單。</p>
+      <section class="card">
+        <label for="query">查詢字詞</label>
+        <div class="search-bar">
+          <input id="query" type="text" placeholder="例如：仁、海納百川、沉默" autocomplete="off" />
+          <button id="searchBtn">查詢</button>
+        </div>
+        <div id="status" class="status" hidden></div>
+        <p class="hint">資料來源：教育部辭典（Moedict）。</p>
+      </section>
+
+      <section class="card">
+        <div id="result"></div>
+      </section>
+
+      <section class="card">
+        <h2>最近 20 次查詢</h2>
+        <div id="history"></div>
+      </section>
+
+      <footer>
+        查詢結果將保存在瀏覽器本機（localStorage），不會上傳到伺服器。
+      </footer>
+    </main>
+
+    <script>
+      const MAX_HISTORY = 20;
+      const HISTORY_KEY = "moedict-history-v1";
+      const searchBtn = document.getElementById("searchBtn");
+      const queryInput = document.getElementById("query");
+      const statusBox = document.getElementById("status");
+      const resultBox = document.getElementById("result");
+      const historyBox = document.getElementById("history");
+
+      const moeEndpoints = {
+        uni: (term) => [
+          `https://www.moedict.tw/uni/${term}.json`,
+          `https://www.moedict.tw/uni/${term}`,
+        ],
+        word: (term) => [
+          `https://www.moedict.tw/a/${term}.json`,
+          `https://www.moedict.tw/a/${term}`,
+        ],
+        words: (term) => [
+          `https://www.moedict.tw/words/${term}.json`,
+          `https://www.moedict.tw/words/${term}`,
+        ],
+        idioms: (term) => [
+          `https://www.moedict.tw/idiom/${term}.json`,
+          `https://www.moedict.tw/idiom/${term}`,
+        ],
+      };
+
+      const formatDateTime = (value) => {
+        const date = new Date(value);
+        return date.toLocaleString("zh-TW", { hour12: false });
+      };
+
+      const isSingleHanCharacter = (term) => {
+        const chars = Array.from(term.trim());
+        return chars.length === 1 && /\p{Script=Han}/u.test(chars[0]);
+      };
+
+      const showStatus = (message, isError = false) => {
+        statusBox.textContent = message;
+        statusBox.hidden = false;
+        statusBox.classList.toggle("error", isError);
+      };
+
+      const clearStatus = () => {
+        statusBox.hidden = true;
+        statusBox.textContent = "";
+        statusBox.classList.remove("error");
+      };
+
+      const fetchJsonWithFallback = async (urls) => {
+        let lastError = new Error("查詢失敗");
+        for (const url of urls) {
+          try {
+            const response = await fetch(url);
+            if (!response.ok) {
+              throw new Error(`${response.status} ${response.statusText}`);
+            }
+            return { data: await response.json(), source: url };
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        throw lastError;
+      };
+
+      const createDefinitionBlock = (heteronym) => {
+        const block = document.createElement("div");
+        block.className = "definition";
+
+        if (heteronym.bopomofo || heteronym.pinyin) {
+          const pron = document.createElement("p");
+          const bopomofo = heteronym.bopomofo ? `注音：${heteronym.bopomofo}` : "";
+          const pinyin = heteronym.pinyin ? `拼音：${heteronym.pinyin}` : "";
+          pron.textContent = [bopomofo, pinyin].filter(Boolean).join("｜");
+          block.appendChild(pron);
+        }
+
+        if (heteronym.definitions && heteronym.definitions.length > 0) {
+          heteronym.definitions.forEach((definition, index) => {
+            const line = document.createElement("p");
+            const type = definition.type ? `${definition.type} ` : "";
+            line.textContent = `${index + 1}. ${type}${definition.def || ""}`;
+            block.appendChild(line);
+
+            if (definition.example && definition.example.length > 0) {
+              const example = document.createElement("p");
+              example.textContent = `例：${definition.example.join("；")}`;
+              block.appendChild(example);
+            }
+
+            if (definition.quote && definition.quote.length > 0) {
+              const quote = document.createElement("p");
+              quote.textContent = `引：${definition.quote.join("；")}`;
+              block.appendChild(quote);
+            }
+          });
+        }
+
+        return block;
+      };
+
+      const renderEntry = (data, label = "解釋") => {
+        const container = document.createElement("div");
+        const title = document.createElement("div");
+        title.className = "result-title";
+        title.textContent = data.title || data.word || data.term || "查詢結果";
+        container.appendChild(title);
+
+        const section = document.createElement("div");
+        section.className = "section";
+        const heading = document.createElement("h3");
+        heading.textContent = label;
+        section.appendChild(heading);
+
+        const heteronyms = Array.isArray(data.heteronyms) ? data.heteronyms : [];
+        if (heteronyms.length === 0) {
+          const empty = document.createElement("p");
+          empty.textContent = "未提供可解析的解釋內容。";
+          section.appendChild(empty);
+        } else {
+          heteronyms.forEach((heteronym) => {
+            section.appendChild(createDefinitionBlock(heteronym));
+          });
+        }
+
+        container.appendChild(section);
+        return container;
+      };
+
+      const renderPillList = (titleText, items) => {
+        const section = document.createElement("div");
+        section.className = "section";
+
+        const heading = document.createElement("h3");
+        heading.textContent = titleText;
+        section.appendChild(heading);
+
+        if (!items || items.length === 0) {
+          const empty = document.createElement("p");
+          empty.textContent = "目前無法取得清單資料。";
+          section.appendChild(empty);
+          return section;
+        }
+
+        const list = document.createElement("div");
+        list.className = "pill-list";
+        items.forEach((item) => {
+          const pill = document.createElement("span");
+          pill.className = "pill";
+          pill.textContent = item;
+          list.appendChild(pill);
+        });
+        section.appendChild(list);
+        return section;
+      };
+
+      const normalizeList = (payload) => {
+        if (!payload) {
+          return [];
+        }
+        if (Array.isArray(payload)) {
+          return payload;
+        }
+        if (Array.isArray(payload.words)) {
+          return payload.words;
+        }
+        if (Array.isArray(payload.items)) {
+          return payload.items;
+        }
+        return [];
+      };
+
+      const loadHistory = () => {
+        try {
+          return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
+        } catch {
+          return [];
+        }
+      };
+
+      const saveHistory = (history) => {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+      };
+
+      const updateHistory = (term, resultHtml) => {
+        const history = loadHistory();
+        history.unshift({ term, resultHtml, timestamp: Date.now() });
+        const trimmed = history.slice(0, MAX_HISTORY);
+        saveHistory(trimmed);
+        renderHistory(trimmed);
+      };
+
+      const renderHistory = (history = loadHistory()) => {
+        historyBox.innerHTML = "";
+        if (history.length === 0) {
+          historyBox.textContent = "尚無查詢紀錄。";
+          return;
+        }
+        history.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "history-item";
+
+          const meta = document.createElement("div");
+          meta.className = "history-meta";
+          const title = document.createElement("strong");
+          title.textContent = item.term;
+          const time = document.createElement("span");
+          time.textContent = formatDateTime(item.timestamp);
+          meta.appendChild(title);
+          meta.appendChild(time);
+
+          const actions = document.createElement("div");
+          actions.className = "history-actions";
+          const button = document.createElement("button");
+          button.textContent = "查看結果";
+          button.addEventListener("click", () => {
+            resultBox.innerHTML = item.resultHtml;
+            clearStatus();
+          });
+          actions.appendChild(button);
+
+          row.appendChild(meta);
+          row.appendChild(actions);
+          historyBox.appendChild(row);
+        });
+      };
+
+      const handleSearch = async () => {
+        const term = queryInput.value.trim();
+        if (!term) {
+          showStatus("請先輸入查詢字詞。", true);
+          return;
+        }
+        clearStatus();
+        resultBox.innerHTML = "";
+        searchBtn.disabled = true;
+        showStatus("查詢中，請稍候…");
+
+        try {
+          if (isSingleHanCharacter(term)) {
+            const uniResult = await fetchJsonWithFallback(
+              moeEndpoints.uni(encodeURIComponent(term))
+            );
+            const container = document.createElement("div");
+            container.appendChild(renderEntry(uniResult.data, "單字解釋"));
+
+            const [wordList, idiomList] = await Promise.all([
+              fetchJsonWithFallback(moeEndpoints.words(encodeURIComponent(term))).catch(
+                () => null
+              ),
+              fetchJsonWithFallback(moeEndpoints.idioms(encodeURIComponent(term))).catch(
+                () => null
+              ),
+            ]);
+
+            container.appendChild(
+              renderPillList("造詞", normalizeList(wordList?.data))
+            );
+            container.appendChild(
+              renderPillList("成語", normalizeList(idiomList?.data))
+            );
+
+            resultBox.appendChild(container);
+          } else {
+            const wordResult = await fetchJsonWithFallback(
+              moeEndpoints.word(encodeURIComponent(term))
+            );
+            resultBox.appendChild(renderEntry(wordResult.data, "詞語／成語解釋"));
+          }
+
+          updateHistory(term, resultBox.innerHTML);
+          showStatus("查詢完成！");
+        } catch (error) {
+          showStatus(
+            `查詢失敗：${error.message || "未知錯誤"}。請確認字詞是否正確，或稍後再試。`,
+            true
+          );
+        } finally {
+          searchBtn.disabled = false;
+        }
+      };
+
+      searchBtn.addEventListener("click", handleSearch);
+      queryInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          handleSearch();
+        }
+      });
+
+      renderHistory();
+    </script>
+  </body>
+</html>
